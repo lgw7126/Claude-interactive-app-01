@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>神奈川沖浪裏 — Interactive Portfolio Hero</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌊</text></svg>">
+<style>
+  /* ==============================================
+     여기서 히어로 문구를 수정하세요
+     (아래 .hero-* 텍스트는 body 안에 있습니다)
+     ============================================== */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; background: #21160e; }
+
+  #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+  #fallback { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none; }
+
+  .hero-copy {
+    position: fixed; left: 5vw; bottom: 9vh; z-index: 10;
+    pointer-events: none; user-select: none;
+    color: #17334f;
+    text-shadow: 0 1px 0 rgba(236, 229, 211, .6), 0 0 18px rgba(236, 229, 211, .5);
+    font-family: "Noto Serif KR", "Nanum Myeongjo", "Songti SC", Georgia, serif;
+  }
+  .hero-copy .kicker {
+    font-size: clamp(11px, 1.2vw, 14px); letter-spacing: .42em; text-transform: uppercase;
+    opacity: .95; margin-bottom: 1.1em; color: #a32e2e;
+  }
+  .hero-copy h1 {
+    font-size: clamp(34px, 5.2vw, 72px); font-weight: 600; line-height: 1.12; letter-spacing: .02em;
+  }
+  .hero-copy .sub {
+    margin-top: 1.1em; font-size: clamp(13px, 1.4vw, 17px); letter-spacing: .12em; opacity: .9;
+  }
+
+  .cartouche {
+    position: fixed; top: 4.5vh; right: 4vw; z-index: 10; pointer-events: none; user-select: none;
+    writing-mode: vertical-rl; font-family: "Noto Serif KR", "Songti SC", serif;
+    color: #17334f; opacity: .85; letter-spacing: .35em;
+    font-size: clamp(12px, 1.3vw, 16px);
+    text-shadow: 0 0 12px rgba(236, 229, 211, .7);
+  }
+
+  .controls {
+    position: fixed; right: 3.2vw; bottom: 8vh; z-index: 20; display: flex; flex-direction: column;
+    gap: 10px; align-items: flex-end;
+    font-family: "Noto Serif KR", Georgia, serif;
+  }
+  .controls button {
+    pointer-events: auto; cursor: pointer;
+    background: rgba(30, 44, 66, .55); color: #f3ecd9;
+    border: 1px solid rgba(243, 236, 217, .45); border-radius: 999px;
+    padding: 10px 18px; font-size: 13px; letter-spacing: .18em;
+    backdrop-filter: blur(4px); transition: background .25s, border-color .25s;
+    font-family: inherit;
+  }
+  .controls button:hover { background: rgba(30, 44, 66, .8); }
+  .controls button.active { background: rgba(163, 46, 46, .75); border-color: rgba(243, 236, 217, .8); }
+  .controls .hint {
+    font-size: 11px; letter-spacing: .14em; color: #f3ecd9; opacity: .7;
+    text-shadow: 0 1px 8px rgba(20, 34, 56, .6);
+  }
+
+  #cam-dot {
+    position: fixed; z-index: 15; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+    border-radius: 50%; background: rgba(163, 46, 46, .85);
+    box-shadow: 0 0 12px rgba(163, 46, 46, .8); pointer-events: none; display: none;
+  }
+  video#cam { position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+  .scroll-cue {
+    position: fixed; left: 50%; bottom: 2.6vh; transform: translateX(-50%); z-index: 10;
+    color: #17334f; opacity: .7; font-size: 11px; letter-spacing: .4em;
+    font-family: Georgia, serif; pointer-events: none; user-select: none;
+    text-shadow: 0 0 10px rgba(236, 229, 211, .7);
+    animation: bob 2.6s ease-in-out infinite;
+  }
+  @keyframes bob { 0%,100% { transform: translate(-50%, 0); } 50% { transform: translate(-50%, 7px); } }
+</style>
+</head>
+<body>
+
+<canvas id="stage"></canvas>
+<img id="fallback" src="assets/wave.jpg" alt="The Great Wave off Kanagawa — Katsushika Hokusai">
+
+<div class="cartouche">神奈川沖浪裏 · 葛飾北斎</div>
+
+<div class="hero-copy">
+  <div class="kicker">Interactive Portfolio</div>
+  <h1>이름을 입력하세요<br>Creative Developer</h1>
+  <div class="sub">마우스를 움직여 파도를 깨워 보세요</div>
+</div>
+
+<div class="controls">
+  <button id="handBtn" type="button">✋ 손 추적 켜기</button>
+  <div class="hint" id="hintText">move to stir the sea · click to splash</div>
+</div>
+
+<div id="cam-dot"></div>
+<video id="cam" autoplay playsinline muted></video>
+<div class="scroll-cue">SCROLL</div>
+
+<script>
+'use strict';
+/* =========================================================
+   神奈川沖浪裏 interactive hero
+   - 원본 판화 픽셀을 WebGL로 "변위(displacement)"만 시킴
+     → 화풍·색감은 단 한 픽셀도 바뀌지 않음
+   - assets/mask.png 가 바다/파도 영역만 움직이도록 제한
+   - 포인터: 마우스 기본, 버튼으로 MediaPipe 손 추적 전환
+   ========================================================= */
+
+const TRAIL = 24;              // 포인터 궤적 샘플 수 (셰이더와 일치해야 함)
+const IMG_SRC  = 'assets/wave.jpg';
+const MASK_SRC = 'assets/mask.png';
+
+const canvas = document.getElementById('stage');
+const gl = canvas.getContext('webgl', { antialias: false, alpha: false });
+
+if (!gl) {
+  document.getElementById('fallback').style.display = 'block';
+  canvas.style.display = 'none';
+} else {
+  main();
+}
+
+function main() {
+
+const VERT = `
+attribute vec2 a_pos;
+varying vec2 v_uv;
+void main() {
+  v_uv = a_pos * 0.5 + 0.5;
+  v_uv.y = 1.0 - v_uv.y;
+  gl_Position = vec4(a_pos, 0.0, 1.0);
+}`;
+
+const FRAG = `
+precision highp float;
+varying vec2 v_uv;
+uniform sampler2D u_img;
+uniform sampler2D u_mask;
+uniform vec2  u_uvScale;
+uniform vec2  u_uvOffset;
+uniform float u_aspect;    // canvas w/h
+uniform float u_time;
+uniform vec4  u_trail[${TRAIL}];   // xy: pos (canvas uv), zw: direction * speed
+uniform vec2  u_trailMeta[${TRAIL}]; // x: birth time, y: splash(0|1)
+
+void main() {
+  vec2 uvC = v_uv;
+  vec2 imgUV = u_uvOffset + uvC * u_uvScale;
+  float m = texture2D(u_mask, imgUV).r;
+
+  vec2 disp = vec2(0.0);
+
+  // --- 상시 잔물결 (바다가 은은하게 숨쉬는 움직임) ---
+  float t = u_time;
+  disp += vec2(
+      sin(uvC.x * 9.0  - t * 1.15 + uvC.y * 4.0),
+      cos(uvC.x * 7.0  - t * 0.9  + uvC.y * 6.0) * 0.6
+    ) * 0.0026;
+  disp += vec2(
+      sin(uvC.y * 13.0 + t * 0.7),
+      sin(uvC.x * 11.0 + t * 0.55)
+    ) * 0.0014;
+
+  // --- 포인터 궤적: 움직인 방향으로 파도가 솟구침 ---
+  for (int i = 0; i < ${TRAIL}; i++) {
+    vec4 s = u_trail[i];
+    vec2 meta = u_trailMeta[i];
+    float age = t - meta.x;
+    if (age < 0.0 || age > 3.5) continue;
+
+    vec2 d = uvC - s.xy;
+    d.x *= u_aspect;
+    float dist = length(d);
+
+    float speed = length(s.zw);
+    if (speed < 0.0001 && meta.y < 0.5) continue;
+
+    float sigma = mix(0.10, 0.16, meta.y);         // splash는 더 넓게
+    float env   = exp(-dist * dist / (2.0 * sigma * sigma));
+    float decay = exp(-age * 2.2);
+
+    // 진행 방향 서지 + 퍼져나가는 링 리플
+    float ring  = sin(dist * 42.0 - age * 9.0);
+    vec2 dirN   = s.zw / max(speed, 0.0001);
+    vec2 radial = d / max(dist, 0.0001);
+
+    vec2 surge  = dirN * (0.55 + 0.45 * ring);
+    vec2 ripple = radial * ring;
+
+    float ampMouse  = min(speed * 3.2, 1.4) * 0.011;
+    float ampSplash = meta.y * 0.016 * (0.4 + 0.6 * ring);
+
+    disp += (surge * ampMouse + ripple * (ampMouse * 0.45 + ampSplash)) * env * decay;
+  }
+
+  disp *= m;
+
+  vec2 finalUV = u_uvOffset + (uvC + disp) * u_uvScale;
+  finalUV = clamp(finalUV, vec2(0.001), vec2(0.999));
+  gl_FragColor = texture2D(u_img, finalUV);
+}`;
+
+  function compile(type, src) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS))
+      throw new Error(gl.getShaderInfoLog(sh));
+    return sh;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS))
+    throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+  const locPos = gl.getAttribLocation(prog, 'a_pos');
+  gl.enableVertexAttribArray(locPos);
+  gl.vertexAttribPointer(locPos, 2, gl.FLOAT, false, 0, 0);
+
+  const U = {};
+  ['u_img','u_mask','u_uvScale','u_uvOffset','u_aspect','u_time','u_trail','u_trailMeta']
+    .forEach(n => U[n] = gl.getUniformLocation(prog, n));
+
+  function loadTexture(unit, src, cb) {
+    const tex = gl.createTexture();
+    const img = new Image();
+    img.onload = () => {
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, img);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      cb(img.width, img.height);
+    };
+    img.src = src;
+  }
+
+  let imgW = 0, imgH = 0, ready = 0;
+  loadTexture(0, IMG_SRC,  (w, h) => { imgW = w; imgH = h; ready++; fit(); });
+  loadTexture(1, MASK_SRC, () => { ready++; });
+  gl.uniform1i(U.u_img, 0);
+  gl.uniform1i(U.u_mask, 1);
+
+  // --- cover-fit: 그림 비율 유지한 채 화면을 가득 채움 ---
+  function fit() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    canvas.width  = Math.round(canvas.clientWidth  * dpr);
+    canvas.height = Math.round(canvas.clientHeight * dpr);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    if (!imgW) return;
+    const cA = canvas.width / canvas.height, iA = imgW / imgH;
+    let sx = 1, sy = 1, ox = 0, oy = 0;
+    if (cA > iA) { sy = iA / cA; oy = (1 - sy) / 2; }
+    else         { sx = cA / iA; ox = (1 - sx) / 2; }
+    gl.uniform2f(U.u_uvScale, sx, sy);
+    gl.uniform2f(U.u_uvOffset, ox, oy);
+    gl.uniform1f(U.u_aspect, cA);
+  }
+  window.addEventListener('resize', fit);
+
+  // --- 포인터 궤적 링버퍼 ---
+  const trail = new Float32Array(TRAIL * 4);
+  const meta  = new Float32Array(TRAIL * 2);
+  meta.fill(-100);
+  let head = 0;
+  let lastX = -1, lastY = -1, lastT = 0;
+
+  function now() { return performance.now() / 1000; }
+
+  function pushPointer(x, y, splash) {
+    const t = now();
+    const nx = x / canvas.clientWidth;
+    const ny = y / canvas.clientHeight;
+    let vx = 0, vy = 0;
+    if (lastX >= 0 && !splash) {
+      const dt = Math.max(t - lastT, 0.008);
+      vx = (nx - lastX) / dt;
+      vy = (ny - lastY) / dt;
+      const sp = Math.hypot(vx, vy);
+      if (sp < 0.02) return;               // 정지 상태는 무시
+      const cap = 2.2;                     // 속도 상한
+      if (sp > cap) { vx = vx / sp * cap; vy = vy / sp * cap; }
+    }
+    lastX = nx; lastY = ny; lastT = t;
+    const i = head % TRAIL;
+    trail[i*4] = nx; trail[i*4+1] = ny; trail[i*4+2] = vx * 0.12; trail[i*4+3] = vy * 0.12;
+    meta[i*2] = t; meta[i*2+1] = splash ? 1 : 0;
+    head++;
+  }
+
+  let lastMove = 0;
+  canvas.addEventListener('mousemove', e => {
+    const t = performance.now();
+    if (t - lastMove < 24) return;         // ~40Hz 샘플링
+    lastMove = t;
+    pushPointer(e.clientX, e.clientY, false);
+  });
+  canvas.addEventListener('mousedown', e => pushPointer(e.clientX, e.clientY, true));
+  canvas.addEventListener('touchmove', e => {
+    const t = performance.now();
+    if (t - lastMove < 24) return;
+    lastMove = t;
+    const p = e.touches[0];
+    pushPointer(p.clientX, p.clientY, false);
+  }, { passive: true });
+  canvas.addEventListener('touchstart', e => {
+    const p = e.touches[0];
+    pushPointer(p.clientX, p.clientY, true);
+  }, { passive: true });
+
+  // --- 렌더 루프 ---
+  function frame() {
+    if (ready >= 2) {
+      gl.uniform1f(U.u_time, now());
+      gl.uniform4fv(U.u_trail, trail);
+      gl.uniform2fv(U.u_trailMeta, meta);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+    requestAnimationFrame(frame);
+  }
+  fit();
+  frame();
+
+  /* =========================================================
+     ✋ MediaPipe 손 추적 (선택 기능)
+     - 버튼을 누르면 카메라 권한 요청 → 검지 끝(landmark 8)이
+       포인터 역할. 모든 처리는 브라우저 로컬에서만 수행됨.
+     - 로드 실패/권한 거부 시 마우스 모드 유지.
+     ========================================================= */
+  const handBtn = document.getElementById('handBtn');
+  const hintText = document.getElementById('hintText');
+  const camDot = document.getElementById('cam-dot');
+  const video = document.getElementById('cam');
+  let handOn = false, landmarker = null, stream = null, rafHand = 0;
+
+  handBtn.addEventListener('click', async () => {
+    if (handOn) { stopHands(); return; }
+    handBtn.disabled = true;
+    handBtn.textContent = '… 카메라 준비 중';
+    try {
+      const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14');
+      const files = await vision.FilesetResolver.forVisionTasks(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+      landmarker = await vision.HandLandmarker.createFromOptions(files, {
+        baseOptions: {
+          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+          delegate: 'GPU'
+        },
+        runningMode: 'VIDEO',
+        numHands: 1
+      });
+      stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+      video.srcObject = stream;
+      await video.play();
+      handOn = true;
+      handBtn.classList.add('active');
+      handBtn.textContent = '✋ 손 추적 끄기';
+      hintText.textContent = '손을 좌우로 움직여 파도를 이끌어 보세요';
+      camDot.style.display = 'block';
+      trackHands();
+    } catch (err) {
+      console.warn('hand tracking unavailable:', err);
+      handBtn.textContent = '✋ 손 추적 켜기';
+      hintText.textContent = '카메라를 사용할 수 없어 마우스 모드로 동작합니다';
+      stopHands(true);
+    } finally {
+      handBtn.disabled = false;
+    }
+  });
+
+  function trackHands() {
+    if (!handOn) return;
+    if (video.readyState >= 2) {
+      const res = landmarker.detectForVideo(video, performance.now());
+      if (res.landmarks && res.landmarks.length) {
+        const tip = res.landmarks[0][8];          // 검지 끝
+        const x = (1 - tip.x) * canvas.clientWidth;   // 거울 반전
+        const y = tip.y * canvas.clientHeight;
+        camDot.style.left = x + 'px';
+        camDot.style.top  = y + 'px';
+        const t = performance.now();
+        if (t - lastMove >= 24) { lastMove = t; pushPointer(x, y, false); }
+      }
+    }
+    rafHand = requestAnimationFrame(trackHands);
+  }
+
+  function stopHands(silent) {
+    handOn = false;
+    cancelAnimationFrame(rafHand);
+    if (stream) { stream.getTracks().forEach(tr => tr.stop()); stream = null; }
+    camDot.style.display = 'none';
+    handBtn.classList.remove('active');
+    if (!silent) {
+      handBtn.textContent = '✋ 손 추적 켜기';
+      hintText.textContent = 'move to stir the sea · click to splash';
+    }
+  }
+}
+</script>
+</body>
+</html>
